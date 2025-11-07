@@ -1,6 +1,6 @@
 # Machine Learning avec R
 
-Ce dépôt contient les exercices et le code du cours de Machine Learning utilisant R. 
+Ce dépôt contient le contenu du cours de Machine Learning II utilisant R. 
 Le cours couvre différents aspects de l'apprentissage automatique, notamment :
 
 
@@ -26,7 +26,7 @@ Pour lancer ces scripts R , il faut :
 - R et RStudio
 
 
-### Python Support
+### Python
 
 Le dossier `Py_Code_bmo/` contient une svm développée rapidement grâce à des ressources internet pour mieux comprendre e fonctionnement des SVM :
 - `prediction.py`
