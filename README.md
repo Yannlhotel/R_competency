@@ -1,4 +1,4 @@
-# Cours de Machine Learning avec R
+# Machine Learning avec R
 
 Ce dépôt contient les exercices et le code du cours de Machine Learning utilisant R. 
 Le cours couvre différents aspects de l'apprentissage automatique, notamment :
