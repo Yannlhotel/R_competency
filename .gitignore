@@ -1,0 +1,10 @@
+# Environnement virtuel python
+venv_ML2/ 
+
+# Fichiers R temporaires
+*.RData
+*.Rhistory
+.Rproj.user/
+
+# Fichiers volumineux
+data/
