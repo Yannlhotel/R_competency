@@ -20,6 +20,8 @@ Le cours couvre différents aspects de l'apprentissage automatique, notamment :
 4. **Support Vector Machines**
    - `04_SVC_College.R` - SVM appliqué aux données College
    - `04_test_and_run.R` - Tests et exécution
+   - `05_Non_linear_SVM.R` - Implementation of SVM with non linear kernel
+   
 
 
 Pour lancer ces scripts R , il faut :
