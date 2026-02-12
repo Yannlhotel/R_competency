@@ -54,7 +54,7 @@ marginplot(tao[, c("Air.Temp", "Sea.Surface.Temp")])
 # - do the missing values appear to be random?
 #It seems make 2 cluster.< Temp/Humidity, and there seems to be a  linear relationships bet temp /Sea_surfaceTemp
 # - what is the problem with univariate imputation?
-# This will degade our data
+# This will degrade our data
 
 # 01d: linear model for imputation ----
 # You will use the same longish model specification several times in Exercise 2, 

@@ -1,0 +1,873 @@
+---
+title: "ML2 Projet : Calories prediction"
+author: "Emma Tricquet/Louiza Mezine/Aqeel Hashmi/Yann L'Hotelier"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: cosmo
+    code_folding: show
+---
+
+## Overview
+
+The primary goal is to develop a regression model that accurately estimates Calories (the target variable). By analyzing the relationship between exercise intensity, duration, and the user's physical profile, we can understand which factors
+contribute most significantly to energy expenditure.
+
+# Setup
+
+```{r}
+# Loading necessary libraries
+library(tidyverse)
+library(randomForest)
+library(xgboost)
+library(caret)
+library(corrplot)
+library(Matrix)
+library(Metrics)
+library(ranger)   # Random Forest
+library(dplyr)    # Sorting / data manipulation
+library(ggplot2)  # Visualization
+
+
+# Fix random variables 
+set.seed(42)
+
+```
+
+
+# Improvement of our initial data
+## Data Loading 
+```{r}
+df_1000 <- readRDS("df_1000.rds")
+df <- df_1000
+dim(df)
+```
+```{r, message=true}
+str(df)
+```
+
+## Train / Test Split (ONE TIME ONLY)
+```{r }
+train_index <- createDataPartition(df$Calories, p = 0.8, list = FALSE)
+
+train_raw <- df[train_index, ]
+test_raw  <- df[-train_index, ]
+```
+
+
+```{r Baseline Random Forest}
+train_base <- train_raw %>%
+  select(-User_ID) %>%
+  mutate(Gender = ifelse(Gender == "male", 1, 0))
+
+test_base <- test_raw %>%
+  select(-User_ID) %>%
+  mutate(Gender = ifelse(Gender == "male", 1, 0))
+
+rf_base <- randomForest(
+  Calories ~ .,
+  data = train_base,
+  ntree = 300
+)
+
+pred_base <- predict(rf_base, test_base)
+
+MAE_base <- mean(abs(pred_base - test_base$Calories))
+R2_base  <- cor(pred_base, test_base$Calories)^2
+
+MAE_base
+```
+
+
+```{r}
+R2_base
+```
+
+```{r Improved Feature Dataset}
+train_improved <- train_raw %>%
+  select(-User_ID) %>%
+    mutate(
+      Gender = ifelse(Gender == "male", 1, 0),
+      BMI = Weight / (Height / 100)^2,
+      Intensity = Heart_Rate * Duration,
+      Temp_Above_Normal = Body_Temp - 37
+    ) %>%
+    select(-Weight, -Heart_Rate)
+
+test_improved <- test_raw %>%
+  select(-User_ID) %>%
+    mutate(
+      Gender = ifelse(Gender == "male", 1, 0),
+      BMI = Weight / (Height / 100)^2,
+      Intensity = Heart_Rate * Duration,
+      Temp_Above_Normal = Body_Temp - 37
+    ) %>%
+    select(-Weight, -Heart_Rate)
+```
+
+```{r Improved Random Forest}
+rf_improved <- randomForest(
+  Calories ~ .,
+  data = train_improved,
+  ntree = 300,
+  importance = TRUE
+)
+
+pred_improved <- predict(rf_improved, test_improved)
+
+MAE_improved <- mean(abs(pred_improved - test_improved$Calories))
+R2_improved  <- cor(pred_improved, test_improved$Calories)^2
+
+MAE_improved
+```
+
+```{r}
+R2_improved
+```
+
+```{r Baseline XGBoost}
+train_xgb_base <- train_base
+test_xgb_base  <- test_base
+
+X_train_base <- train_xgb_base %>% select(-Calories)
+y_train_base <- train_xgb_base$Calories
+
+X_test_base  <- test_xgb_base %>% select(-Calories)
+y_test_base  <- test_xgb_base$Calories
+
+dtrain_base <- xgb.DMatrix(as.matrix(X_train_base), label = y_train_base)
+dtest_base  <- xgb.DMatrix(as.matrix(X_test_base),  label = y_test_base)
+
+params <- list(
+  objective = "reg:squarederror",
+  eval_metric = "rmse",
+  max_depth = 6,
+  eta = 0.1,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+xgb_base <- xgb.train(
+  params = params,
+  data = dtrain_base,
+  nrounds = 300,
+  verbose = 0
+)
+
+pred_xgb_base <- predict(xgb_base, dtest_base)
+
+MAE_xgb_base <- mean(abs(pred_xgb_base - y_test_base))
+R2_xgb_base  <- cor(pred_xgb_base, y_test_base)^2
+
+MAE_xgb_base
+```
+
+```{r}
+R2_xgb_base
+```
+
+```{r Improved XGBoost}
+X_train <- train_improved %>% select(-Calories)
+y_train <- train_improved$Calories
+
+X_test  <- test_improved %>% select(-Calories)
+y_test  <- test_improved$Calories
+
+dtrain <- xgb.DMatrix(as.matrix(X_train), label = y_train)
+dtest  <- xgb.DMatrix(as.matrix(X_test),  label = y_test)
+
+xgb_model <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 300,
+  verbose = 0
+)
+
+pred_xgb <- predict(xgb_model, dtest)
+
+MAE_xgb <- mean(abs(pred_xgb - y_test))
+R2_xgb  <- cor(pred_xgb, y_test)^2
+
+MAE_xgb
+```
+
+```{r}
+R2_xgb
+```
+
+```{r XGBoost Feature Importance}
+importance_matrix <- xgb.importance(
+  feature_names = colnames(X_train),
+  model = xgb_model
+)
+
+xgb.plot.importance(importance_matrix)
+```
+
+
+## Final Comparison Table
+```{r}
+results <- data.frame(
+  Model = c(
+    "Baseline Random Forest",
+    "Improved Random Forest",
+    "Baseline XGBoost",
+    "Improved XGBoost"
+    ),
+  
+MAE = c(
+  MAE_base,
+  MAE_improved,
+  MAE_xgb_base,
+  MAE_xgb
+  ),
+
+R2 = c(
+  R2_base,
+  R2_improved,
+  R2_xgb_base,
+  R2_xgb
+  )
+
+)
+
+results
+```
+
+
+# Applying Random Forest
+
+## 2) Preprocessing
+
+```{r preprocessing}
+# Convert Gender to factor (categorical)
+df$Gender <- factor(df$Gender)
+
+# Remove the user identifier (not a useful predictor, risk of leakage)
+df$User_ID <- NULL
+```
+
+## 3) Train / Validation / Test split
+
+```{r split}
+set.seed(42)
+
+n <- nrow(df)
+
+# Randomly shuffle indices to avoid biased splits if the dataset is ordered
+idx <- sample(seq_len(n))
+
+n_train <- floor(0.60 * n)  # 60% for training
+n_val   <- floor(0.20 * n)  # 20% for validation
+# The remainder (~20%) is the final test set
+
+# Split the shuffled indices into 3 blocks
+idx_train <- idx[1:n_train]
+idx_val   <- idx[(n_train + 1):(n_train + n_val)]
+idx_test  <- idx[(n_train + n_val + 1):n]
+
+train_df <- df[idx_train, ]  # training set (fit models)
+val_df   <- df[idx_val, ]    # validation set (hyperparameter selection)
+test_df  <- df[idx_test, ]   # test set (final evaluation only)
+
+dim(train_df)
+dim(val_df)
+dim(test_df)
+```
+
+## 4) Libraries, formula, and metrics
+
+```{r libs-metrics}
+target_formula <- Calories ~ .
+
+# Metrics
+
+rmse <- function(y_true, y_pred) {
+  sqrt(mean((y_true - y_pred)^2))
+}
+
+mae <- function(y_true, y_pred) {
+  mean(abs(y_true - y_pred))
+}
+
+# R-squared (coefficient of determination)
+r2 <- function(y_true, y_pred) {
+  1 - sum((y_true - y_pred)^2) / sum((y_true - mean(y_true))^2)
+}
+```
+
+## 5) Baseline model (train → validation)
+
+```{r baseline}
+set.seed(42)
+
+# p = number of predictors (all columns except target)
+p <- ncol(train_df) - 1
+
+# Course rule of thumb: mtry ~ sqrt(p)
+# Here p = 7 => sqrt(7) ~ 2.64 => mtry = 2 (or 3)
+baseline_model <- ranger(
+  formula = target_formula,
+  data = train_df,
+  num.trees = 500,
+  mtry = floor(sqrt(p)),
+  min.node.size = 5
+)
+
+baseline_pred <- predict(baseline_model, data = val_df)$predictions
+
+baseline_rmse <- rmse(val_df$Calories, baseline_pred)
+baseline_mae  <- mae(val_df$Calories, baseline_pred)
+baseline_r2   <- r2(val_df$Calories, baseline_pred)
+
+cat("Baseline (Validation) — MAE:", baseline_mae,
+    " RMSE:", baseline_rmse,
+    " R2:", baseline_r2, "\n")
+```
+
+## 6) Hyperparameter tuning (grid search on validation)
+
+We choose the configuration that **minimizes validation RMSE**, and we also report MAE and R².
+
+```{r grid-search}
+# Hyperparameter grid:
+# - mtry: number of variables sampled as candidates at each split
+# - min.node.size: controls tree depth / leaf size
+# - num.trees: number of trees in the forest
+
+grid <- expand.grid(
+  mtry = 1:p,
+  min.node.size = c(1, 3, 5, 10),
+  num.trees = c(300, 500, 800)
+)
+
+nrow(grid)  # number of configurations
+
+# Pre-allocate results (same number of rows as the grid)
+results <- grid
+results$RMSE_val <- NA_real_
+results$MAE_val  <- NA_real_
+results$R2_val   <- NA_real_
+
+set.seed(42)
+for (i in seq_len(nrow(grid))) {
+
+  model_i <- ranger(
+    formula = target_formula,
+    data = train_df,
+    num.trees = grid$num.trees[i],
+    mtry = grid$mtry[i],
+    min.node.size = grid$min.node.size[i]
+  )
+
+  pred_i <- predict(model_i, data = val_df)$predictions
+
+  results$RMSE_val[i] <- rmse(val_df$Calories, pred_i)
+  results$MAE_val[i]  <- mae(val_df$Calories, pred_i)
+  results$R2_val[i]   <- r2(val_df$Calories, pred_i)
+}
+
+# Sort by RMSE (ascending)
+results_sorted <- results %>% arrange(RMSE_val)
+
+cat("\nTop 10 configurations (Validation, sorted by RMSE)\n")
+print(head(results_sorted, 10))
+
+# Best configuration
+top1 <- results_sorted[1, ]
+cat("\nBest configuration (Validation)\n")
+print(top1)
+
+# Save full tuning table
+write.csv(results_sorted, "rf_tuning_results.csv", row.names = FALSE)
+```
+
+## 7) Final training (train + validation) and test evaluation
+
+Important: to compare fairly on the **test set**, we refit:
+
+- **baseline_final_model** with baseline hyperparameters on `(train + validation)`  
+- **final_model** with tuned hyperparameters on `(train + validation)`  
+
+Then evaluate both on `test_df`.
+
+```{r final-train-test}
+# Train on train + validation, then evaluate on test (fair comparison)
+train_val_df <- bind_rows(train_df, val_df)
+
+# --- Baseline refit on train+val, then evaluate on test ---
+set.seed(42)
+baseline_final_model <- ranger(
+  formula = target_formula,
+  data = train_val_df,
+  num.trees = 500,
+  mtry = floor(sqrt(p)),
+  min.node.size = 5
+)
+
+baseline_test_pred <- predict(baseline_final_model, data = test_df)$predictions
+baseline_rmse_test <- rmse(test_df$Calories, baseline_test_pred)
+baseline_mae_test  <- mae(test_df$Calories, baseline_test_pred)
+baseline_r2_test   <- r2(test_df$Calories, baseline_test_pred)
+
+cat("\nBaseline (Test)\n")
+cat("MAE_test :", baseline_mae_test,  "\n")
+cat("RMSE_test:", baseline_rmse_test, "\n")
+cat("R2_test  :", baseline_r2_test,   "\n")
+
+# --- Tuned RF trained on train+val, then evaluate on test ---
+set.seed(42)
+final_model <- ranger(
+  formula = target_formula,
+  data = train_val_df,
+  num.trees = top1$num.trees,
+  mtry = top1$mtry,
+  min.node.size = top1$min.node.size,
+  importance = "impurity"   # needed to compute variable importance
+)
+
+final_test_pred <- predict(final_model, data = test_df)$predictions
+final_rmse_test <- rmse(test_df$Calories, final_test_pred)
+final_mae_test  <- mae(test_df$Calories, final_test_pred)
+final_r2_test   <- r2(test_df$Calories, final_test_pred)
+
+cat("\nTuned RF (Test)\n")
+cat("MAE_test :", final_mae_test,  "\n")
+cat("RMSE_test:", final_rmse_test, "\n")
+cat("R2_test  :", final_r2_test,   "\n")
+
+# Summary table
+summary_compare <- data.frame(
+  Model = c("Baseline RF (Test)", "Tuned RF (Test)"),
+  MAE   = c(baseline_mae_test, final_mae_test),
+  RMSE  = c(baseline_rmse_test, final_rmse_test),
+  R2    = c(baseline_r2_test, final_r2_test)
+)
+
+cat("\nSummary (Baseline vs Tuned on Test)\n")
+print(summary_compare)
+
+write.csv(summary_compare, "rf_summary_baseline_vs_tuned.csv", row.names = FALSE)
+```
+
+## 8) Plot: Predicted vs True (test set)
+
+This plot helps visually assess calibration and error patterns.  
+A perfect model would lie on the diagonal line.
+
+```{r plot-pred-vs-true}
+plot_df <- data.frame(True = test_df$Calories, Pred = final_test_pred)
+
+ggplot(plot_df, aes(x = True, y = Pred)) +
+  geom_point(alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(
+    title = "Predicted vs True Calories (Test set) — Tuned Random Forest",
+    x = "True Calories",
+    y = "Predicted Calories"
+  )
+```
+
+## 9) Variable importance (impurity-based)
+
+This shows which features contribute most to decreasing impurity in splits.  
+It is **useful for interpretation**, but remember: impurity importance can be biased toward variables with more potential split points.
+
+```{r var-importance}
+# Extract importance values
+imp <- data.frame(
+  feature = names(final_model$variable.importance),
+  importance = as.numeric(final_model$variable.importance)
+) %>% arrange(desc(importance))
+
+cat("\nTop features (importance)\n")
+print(head(imp, 10))
+
+# Plot Top 10
+ggplot(imp %>% slice_max(order_by = importance, n = 10),
+       aes(x = reorder(feature, importance), y = importance)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Top 10 Feature Importances — Tuned Random Forest",
+    x = "Feature",
+    y = "Importance (impurity)"
+  )
+```
+
+## 10) Residual plot (test set)
+
+Residuals = True − Pred.  
+This plot helps detect systematic bias (e.g., under-predicting high values).
+
+```{r residuals-plot}
+res_df <- data.frame(
+  True  = test_df$Calories,
+  Pred  = final_test_pred,
+  Resid = test_df$Calories - final_test_pred
+)
+
+ggplot(res_df, aes(x = True, y = Resid)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0) +
+  labs(
+    title = "Residuals vs True Calories (Test set) — Tuned Random Forest",
+    x = "True Calories",
+    y = "Residual (True - Pred)"
+  )
+```
+
+## 11) Save model and outputs
+
+```{r save-outputs}
+# Save the final tuned model
+saveRDS(final_model, "final_rf_model.rds")
+
+cat("\nFiles created:\n")
+cat("- rf_tuning_results.csv (grid search results)\n")
+cat("- rf_summary_baseline_vs_tuned.csv (baseline vs tuned comparison on test)\n")
+cat("- final_rf_model.rds (final tuned random forest model)\n")
+```
+
+
+# Applying XGBoost
+
+```{r}
+file_path <- "calories.csv"
+
+# Read the dataset
+df <- read.csv(file_path, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+str(df)
+df_1000 <- read.csv("df_1000.csv", header = TRUE, sep = ",", stringsAsFactors = FALSE)
+
+# Selection des datas tout en gardant la même répartition
+df <- df %>%
+  mutate(calorie_bin = cut(
+    Calories,
+    breaks = quantile(Calories, probs = seq(0, 1, 0.2)),
+    include.lowest = TRUE
+  ))
+
+df_sample <- df %>%
+  group_by(calorie_bin) %>%
+  slice_sample(n = 400) %>%   # 5 strates × 400 = 2000
+  ungroup()
+
+par(mfrow = c(1,3))
+hist(df$Calories, main = "Original", col = "grey")
+hist(df_sample$Calories, main = "Emma Échantillon 2000", col = "grey")
+hist(df_1000$Calories, main = "Yann Echantillon 1000", col = "grey")
+
+df_sample <- df_sample %>% select(-calorie_bin)
+
+
+#Data cleaning
+df2 <- df_sample %>%
+  select(-User_ID) %>%              
+  mutate(Gender = factor(Gender))
+
+#Numerical matrix
+X <- model.matrix(Calories ~ . - 1, data = df2)  # -1 = pas d’intercept
+y <- df2$Calories
+
+#Split train / test
+
+
+set.seed(42)
+idx <- createDataPartition(y, p = 0.8, list = FALSE)
+
+X_train <- X[idx, ]
+y_train <- y[idx]
+
+X_test  <- X[-idx, ]
+y_test  <- y[-idx]
+
+#DMatrix
+dtrain <- xgb.DMatrix(data = X_train, label = y_train)
+dtest  <- xgb.DMatrix(data = X_test,  label = y_test)
+
+#Parameters
+params <- list(
+  booster = "gbtree",
+  objective = "reg:squarederror",
+  eval_metric = "rmse",
+  eta = 0.05,
+  max_depth = 6,
+  subsample = 0.8,
+  colsample_bytree = 0.8,
+  min_child_weight = 1
+)
+
+#Early stopping train
+set.seed(42)
+
+model <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 5000,                         
+  watchlist = list(train = dtrain, eval = dtest),
+  early_stopping_rounds = 30,
+  verbose = 1
+)
+
+#Prediction & evaluation
+pred <- predict(model, dtest)
+
+rmse_val <- rmse(y_test, pred)
+mae_val  <- mae(y_test, pred)
+r2_val   <- cor(y_test, pred)^2
+
+rmse_val
+mae_val
+r2_val
+
+#What are the most importants categories ?
+imp <- xgb.importance(model = model)
+print(imp)
+# xgb.plot.importance(imp)
+
+#prediction
+new <- data.frame(
+  Gender = "male",
+  Age = 22,
+  Height = 178,
+  Weight = 72,
+  Duration = 30,
+  Heart_Rate = 135,
+  Body_Temp = 40.0
+)
+
+new$Gender <- factor(new$Gender, levels = levels(df2$Gender))
+
+X_new <- model.matrix(~ . - 1, data = new)
+pred_new <- predict(model, xgb.DMatrix(X_new))
+pred_new
+
+
+##XGBOOST avec le DF de Yann
+#Data cleaning
+df3 <- df_1000 %>%
+  select(-User_ID) %>%              
+  mutate(Gender = factor(Gender))
+
+#Numerical matrix
+X <- model.matrix(Calories ~ . - 1, data = df3)  # -1 = pas d’intercept
+y <- df3$Calories
+
+##Split train / test
+set.seed(42)
+idx <- createDataPartition(y, p = 0.8, list = FALSE)
+
+X_train <- X[idx, ]
+y_train <- y[idx]
+
+X_test  <- X[-idx, ]
+y_test  <- y[-idx]
+
+##DMatrix
+dtrain <- xgb.DMatrix(data = X_train, label = y_train)
+dtest  <- xgb.DMatrix(data = X_test,  label = y_test)
+
+##Parameters
+params <- list(
+  booster = "gbtree",
+  objective = "reg:squarederror",
+  eval_metric = "rmse",
+  eta = 0.05,
+  max_depth = 6,
+  subsample = 0.8,
+  colsample_bytree = 0.8,
+  min_child_weight = 1
+)
+
+##Early stopping train
+set.seed(42)
+
+model <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 5000,                         
+  watchlist = list(train = dtrain, eval = dtest),
+  early_stopping_rounds = 30,
+  verbose = 1
+)
+
+##Prediction & evaluation
+pred <- predict(model, dtest)
+
+rmse_val <- rmse(y_test, pred)
+mae_val  <- mae(y_test, pred)
+r2_val   <- cor(y_test, pred)^2
+
+rmse_val
+mae_val
+r2_val
+```
+
+##What are the most importants categories ?
+```{r}
+imp <- xgb.importance(model = model)
+print(imp)
+xgb.plot.importance(imp)
+
+#prediction
+new <- data.frame(
+  Gender = "male",
+  Age = 22,
+  Height = 178,
+  Weight = 72,
+  Duration = 30,
+  Heart_Rate = 135,
+  Body_Temp = 40.0
+)
+
+new$Gender <- factor(new$Gender, levels = levels(df2$Gender))
+
+X_new <- model.matrix(~ . - 1, data = new)
+pred_new <- predict(model, xgb.DMatrix(X_new))
+pred_new
+
+#length(y_test)
+#length(pred)
+
+#Graphs
+
+#Predicted vs True Calories - XGBoost
+df_pred <- data.frame(
+  True = y_test,
+  Predicted = pred
+)
+
+ggplot(df_pred, aes(x = True, y = Predicted)) +
+  geom_point(alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, color = "black") +
+  labs(
+    title = "Predicted vs True Calories - XGBoost",
+    x = "True Calories",
+    y = "Predicted Calories"
+  ) +
+  theme_minimal()
+
+#Residuals vs True Calories
+df_res <- data.frame(
+  True = y_test,
+  Residual = y_test - pred
+)
+
+ggplot(df_res, aes(x = True, y = Residual)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, color = "black") +
+  labs(
+    title = "Residuals vs True Calories - XGBoost",
+    x = "True Calories",
+    y = "Residual (True - Predicted)"
+  ) +
+  theme_minimal()
+```
+
+
+# SHAP Analysis
+
+Understanding *why* the models make specific predictions is just as important as accuracy. We use SHAP (SHapley Additive exPlanations) values to interpret individual predictions and global feature importance.
+
+```{r shap-setup, message=FALSE, warning=FALSE}
+library(kernelshap)
+library(shapviz)
+library(patchwork) # To arrange plots side-by-side
+
+# Select a background dataset for SHAP (using a subset of training data speeds up calculation)
+# We use X_train (matrix) for XGBoost and df_clean (dataframe) for Random Forest context
+set.seed(42)
+shap_bg_size <- 200
+bg_X <- head(X_train, shap_bg_size) 
+bg_df <- head(df_clean, shap_bg_size)
+
+```{r}
+best_xgb_model <- model
+best_rf_model <- final_model
+```
+
+## XGBoost SHAP Analysis
+Since XGBoost has native support for tree-based SHAP, we can extract contributions directly, which is very fast.
+```{r}
+# 1. calculate SHAP values
+# For xgboost objects, shapviz can often extract them natively
+shap_xgb <- shapviz(best_xgb_model, X_pred = X_train)
+
+# 2. Summary Plot (Beeswarm)
+# Shows the impact of features (x-axis) and their value (color)
+p1 <- sv_importance(shap_xgb, kind = "beeswarm", show_numbers = TRUE) +
+  ggtitle("XGBoost: SHAP Summary")
+
+# 3. Dependence Plot
+# Let's look at the most important feature (likely Duration or Heart_Rate)
+p2 <- sv_dependence(shap_xgb, v = "Duration", color_var = "Heart_Rate") +
+  ggtitle("XGBoost: Dependence (Duration vs Heart Rate)")
+
+p1
+p2
+```
+
+
+## Random Forest SHAP Analysis
+Random Forest models (from randomForest or caret) don't always have native SHAP support exposed easily, so we use kernelshap. This computes model-agnostic SHAP values.
+
+```{r}
+# We need a prediction wrapper for kernelshap to understand the model
+# For 'randomForest' package:
+pred_fun_rf <- function(model, newdata) {
+  predict(model, newdata)
+}
+
+# Select a subset of test data to explain (e.g., 100 observations)
+set.seed(42)
+X_explain <- df_clean[sample(nrow(df_clean), 100), ] %>% select(-Calories)
+
+# Calculate SHAP values (Permutation-based)
+# This might take a minute or two depending on your CPU
+shap_rf_values <- kernelshap(
+  best_rf_model,
+  X = X_explain,
+  bg_X = bg_df %>% select(-Calories), # Background dataset
+  pred_fun = pred_fun_rf
+)
+
+# Convert to shapviz object for easy plotting
+shap_rf <- shapviz(shap_rf_values)
+
+# Summary Plot
+p3 <- sv_importance(shap_rf, kind = "beeswarm") +
+  ggtitle("Random Forest: SHAP Summary")
+
+# Dependence Plot
+p4 <- sv_dependence(shap_rf, v = "Duration", color_var = "Heart_Rate") +
+  ggtitle("RF: Dependence (Duration)")
+
+p3
+p4
+```
+
+# Comparison: Waterfall Plot
+Let's pick a sigle ospecific observation (e.g., a high-intensity workout) and see how both models arrived at thier prediction.
+
+```{r}
+# Select one interesting observation (e.g., row 10 of our explanation set)
+obs_index <- 10
+
+# XGBoost Waterfall
+g1 <- sv_waterfall(shap_xgb, row_id = obs_index) +
+  ggtitle(paste("XGBoost Prediction: Row", obs_index))
+
+# Random Forest Waterfall
+g2 <- sv_waterfall(shap_rf, row_id = obs_index) + 
+  ggtitle(paste("RF Prediction: Row", obs_index))
+
+# Display side by side
+g1 + g2
+```
+
+
+
